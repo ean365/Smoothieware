@@ -551,6 +551,21 @@ void Robot::on_gcode_received(void *argument)
             case 20: this->inch_mode = true;   break;
             case 21: this->inch_mode = false;   break;
 
+            case 43:
+                if(gcode->subcode == 1) {
+                    float x, y, z;
+                    std::tie(x, y, z) = tool_offset;
+                    if(gcode->has_letter('X')) x += to_millimeters(gcode->get_value('X'));
+                    if(gcode->has_letter('Y')) y += to_millimeters(gcode->get_value('Y'));
+                    if(gcode->has_letter('Z')) z += to_millimeters(gcode->get_value('Z'));
+                    tool_offset = wcs_t(x, y, z);
+                }
+                break;
+
+            case 49:
+                tool_offset = wcs_t(0, 0, 0);
+                break;
+
             case 54: case 55: case 56: case 57: case 58: case 59:
                 // select WCS 0-8: G54..G59, G59.1, G59.2, G59.3
                 current_wcs = gcode->g - 54;
@@ -1225,7 +1240,7 @@ bool Robot::append_milestone(const float target[], float rate_mm_s)
 
                 //} else if(soft_endstop_truncate) {
                     // TODO VERY hard to do need to go back and change the target, and calculate intercept with the edge
-                    // and store all preceding vectors that have on eor more points ourtside of bounds so we can create a propper clip against the boundaries
+                    // and store all preceding vectors that have one or more points outside of bounds so we can create a proper clip against the boundaries
 
                 } else {
                     // ignore it
@@ -1298,6 +1313,8 @@ bool Robot::append_milestone(const float target[], float rate_mm_s)
     ActuatorCoordinates actuator_pos;
     if(!disable_arm_solution) {
         arm_solution->cartesian_to_actuator( transformed_target, actuator_pos );
+        // some arm solutions can indicate a halt if the calcs go bad
+        if(THEKERNEL->is_halted()) return false;
 
     }else{
         // basically the same as cartesian, would be used for special homing situations like for scara
