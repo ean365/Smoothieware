@@ -421,10 +421,12 @@ void Endstops::on_idle(void*)
 {
     if(trigger_halt) {
         trigger_halt= false;
+        char d= triggered_direction ? '-' : '+';
+        char a= triggered_axis < 3 ? 'X' + triggered_axis : 'A' + triggered_axis-3;
         if(!THEKERNEL->is_grbl_mode()) {
-            THEKERNEL->streams->printf("Limit switch %s was hit\n", triggered_axis);
+            THEKERNEL->streams->printf("Limit switch %c%c was hit\n", d, a);
         }else{
-            THEKERNEL->streams->printf("ALARM: Hard limit %s\n", triggered_axis);
+            THEKERNEL->streams->printf("ALARM: Hard limit %c%c\n", d, a);
         }
         THEKERNEL->streams->printf("// NOTICE limits are disabled until all have been cleared\n");
 
@@ -535,7 +537,7 @@ void Endstops::move_to_origin(axis_bitmap_t axis)
     this->status = NOT_HOMING;
 }
 
-// called in ISR context
+// called in ISR contexte
 void Endstops::check_limits()
 {
     if(this->status == LIMIT_TRIGGERED) {
@@ -569,8 +571,16 @@ void Endstops::check_limits()
 
     // check if any limit switches were hit
     for(auto& i : endstops) {
-        if(i->limit_enable && STEPPER[i->axis_index]->is_moving()) {
-            // check min and max endstops
+        if(!i->limit_enable) continue;
+        uint8_t m= i->axis_index;
+        bool moving= false;
+        if(is_corexy && m < 2) {
+            // corexy either X or Y stepper moving can result in movement towards a limit
+            moving=  STEPPER[0]->is_moving() || STEPPER[1]->is_moving();
+        } else {
+            moving= STEPPER[m]->is_moving();
+        }
+        if(moving) {
             if(debounced_get(&i->pin)) {
                 // endstop triggered
                 this->status = LIMIT_TRIGGERED;
@@ -581,9 +591,9 @@ void Endstops::check_limits()
                 THEKERNEL->immediate_halt();
                 trigger_halt= true;
                 // remember what axis triggered it (first one wins)
-                triggered_axis[0]= STEPPER[i->axis_index]->which_direction() ? '-' : '+';
-                triggered_axis[1]= i->axis;
-                triggered_axis[2]= '\0';
+                // TODO gives incorrect result on corexy need to use fk to figure it out
+                triggered_direction= STEPPER[m]->which_direction();
+                triggered_axis= m;
                 return;
             }
         }
@@ -602,7 +612,9 @@ uint32_t Endstops::read_endstops(uint32_t dummy)
         if(e.pin_info == nullptr) continue; // ignore if not a homing endstop
         int m= e.axis_index;
 
-        // for corexy homing in X or Y we must only check the associated endstop, works as we only home one axis at a time for corexy
+        // for corexy homing in X or Y we must only check the associated endstop,
+        // this works as we only home one axis at a time for corexy
+        // and a straight move means both actuators move
         if(is_corexy && (m == X_AXIS || m == Y_AXIS) && !axis_to_home[m]) continue;
 
         if(STEPPER[m]->is_moving()) {
